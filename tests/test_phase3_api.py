@@ -5,6 +5,7 @@ import shutil
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 import numpy as np
@@ -19,6 +20,7 @@ os.environ["DATABASE_PATH"] = str(_TEST_ROOT / "results.sqlite3")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app.jobs import ASYNC_THRESHOLD_BYTES, run_measurement_job  # noqa: E402
 from app.main import app  # noqa: E402
 
 
@@ -132,6 +134,37 @@ class Phase3ApiTests(unittest.TestCase):
             "/api/v1/measure", files={"file": ("broken.kml", b"<not-kml>", "application/xml")}
         )
         self.assertEqual(response.status_code, 400)
+
+    def test_large_upload_is_queued_and_poll_returns_final_result(self) -> None:
+        prefix = b'''<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark>
+          <name>async polygon</name><Polygon><outerBoundaryIs><LinearRing><coordinates>
+          0,0 0.001,0 0.001,0.001 0,0.001 0,0
+          </coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>'''
+        padding = b"<!--" + b"x" * (ASYNC_THRESHOLD_BYTES + 1) + b"-->"
+        payload = prefix + padding + b"</Document></kml>"
+
+        with patch("app.main.enqueue_measurement") as enqueue:
+            response = self.client.post(
+                "/api/v1/measure",
+                files={"file": ("large.kml", payload, "application/vnd.google-earth.kml+xml")},
+            )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        accepted = response.json()
+        self.assertEqual(accepted["status"], "QUEUED")
+        self.assertEqual(enqueue.call_count, 1)
+
+        queued = self.client.get(accepted["status_url"])
+        self.assertEqual(queued.status_code, 200)
+        self.assertEqual(queued.json()["status"], "QUEUED")
+
+        # Run the captured worker task directly; only Redis publication is mocked.
+        run_measurement_job(*enqueue.call_args.args)
+        completed = self.client.get(accepted["status_url"])
+        self.assertEqual(completed.status_code, 200)
+        self.assertEqual(completed.json()["status"], "COMPLETED")
+        self.assertEqual(completed.json()["result"]["file"]["feature_count"], 1)
+        self.assertEqual(len(completed.json()["result"]["features"]), 1)
 
 
 if __name__ == "__main__":

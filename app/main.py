@@ -10,10 +10,20 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from uuid import uuid4
 
 from app.geoprocessing import ProcessingRejected, process_file
+from app.jobs import ASYNC_THRESHOLD_BYTES, enqueue_measurement
 from app.logging_config import configure_logging
-from app.repository import get_file_features, get_file_info, initialize_repository
+from app.repository import (
+    create_measurement_job,
+    delete_measurement_job,
+    get_file_features,
+    get_file_info,
+    get_measurement_job,
+    get_processed_file,
+    initialize_repository,
+)
 from app.uploads import MAX_UPLOAD_BYTES, UPLOAD_DIRECTORY, UploadRejected, save_upload
 
 configure_logging()
@@ -69,6 +79,40 @@ async def upload_for_measurement(request: Request) -> dict[str, str | int | None
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     file_path = UPLOAD_DIRECTORY / f"{uploaded['id']}{Path(uploaded['filename']).suffix.casefold()}"
+    if int(uploaded["size_bytes"]) > ASYNC_THRESHOLD_BYTES:
+        job_id = uuid4().hex
+        await run_in_threadpool(create_measurement_job, job_id, str(uploaded["id"]))
+        try:
+            await run_in_threadpool(
+                enqueue_measurement,
+                job_id,
+                str(uploaded["id"]),
+                str(uploaded["filename"]),
+                int(uploaded["size_bytes"]),
+                str(file_path),
+            )
+        except Exception:
+            await run_in_threadpool(delete_measurement_job, job_id)
+            file_path.unlink(missing_ok=True)
+            logger.exception("measurement_queue_unavailable", extra={"job_id": job_id})
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Background processing queue is unavailable"},
+            )
+
+        logger.info(
+            "measurement_job_queued",
+            extra={"job_id": job_id, "file_id": uploaded["id"], "size_bytes": uploaded["size_bytes"]},
+        )
+        return JSONResponse(
+            status_code=202,
+            content={
+                "job_id": job_id,
+                "status": "QUEUED",
+                "status_url": f"/api/v1/measure/{job_id}",
+            },
+        )
+
     try:
         result = await run_in_threadpool(
             process_file,
@@ -87,6 +131,26 @@ async def upload_for_measurement(request: Request) -> dict[str, str | int | None
 
     logger.info("upload_processed", extra={"file_id": result["id"], "feature_count": result["feature_count"]})
     return result
+
+
+@app.get("/api/v1/measure/{job_id}", tags=["measurements"])
+async def measurement_job_status(job_id: str) -> dict[str, Any]:
+    """Poll a large-file measurement job and return its final results."""
+    job = await run_in_threadpool(get_measurement_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Measurement job not found")
+
+    response: dict[str, Any] = {
+        "job_id": job["job_id"],
+        "file_id": job["file_id"],
+        "status": job["status"],
+    }
+    if job["status"] == "FAILED":
+        response["error"] = job["error"] or "Measurement processing failed"
+    elif job["status"] == "COMPLETED":
+        result = await run_in_threadpool(get_processed_file, job["file_id"])
+        response["result"] = result
+    return response
 
 
 @app.get("/api/files/{file_id}/", tags=["files"])
