@@ -5,10 +5,13 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-import fiona
-from fiona.errors import FionaError
+import numpy as np
+import pyogrio
+from pyogrio.errors import DataSourceError
+from pyogrio.raw import read as read_layer
 from pyproj import CRS, Transformer
-from shapely.geometry import mapping, shape
+from shapely import from_wkb
+from shapely.geometry import mapping
 from shapely.ops import transform
 
 from app.repository import save_result
@@ -20,11 +23,9 @@ class ProcessingRejected(ValueError):
     """Raised when a stored upload cannot be interpreted as geospatial data."""
 
 
-def _crs_for_layer(source: fiona.Collection, is_kml: bool) -> CRS | None:
-    if source.crs_wkt:
-        return CRS.from_wkt(source.crs_wkt)
-    if source.crs:
-        return CRS.from_user_input(source.crs)
+def _crs_for_layer(source_crs: str | None, is_kml: bool) -> CRS | None:
+    if source_crs:
+        return CRS.from_user_input(source_crs)
     # KML uses longitude/latitude in WGS84 by definition.
     return CRS.from_epsg(4326) if is_kml else None
 
@@ -35,7 +36,7 @@ def _crs_label(crs: CRS | None) -> str | None:
     return crs.to_string()
 
 
-def _local_metric_crs(geometry: Any, source_crs: CRS) -> CRS:
+def _local_metric_crs(geometry: Any, source_crs: CRS, measure_area: bool) -> CRS:
     """Choose a local projected CRS centered on this feature for metric work."""
     to_wgs84 = Transformer.from_crs(source_crs, CRS.from_epsg(4326), always_xy=True)
     centroid = geometry.representative_point()
@@ -46,9 +47,11 @@ def _local_metric_crs(geometry: Any, source_crs: CRS) -> CRS:
         epsg = (32600 if latitude >= 0 else 32700) + zone
         return CRS.from_epsg(epsg)
 
-    # A local Lambert azimuthal equal-area projection covers polar features.
+    # Use an equal-area projection for polar polygons and an equidistant one
+    # for polar lines so each measurement uses the property it needs most.
+    projection = "laea" if measure_area else "aeqd"
     return CRS.from_proj4(
-        f"+proj=laea +lat_0={latitude} +lon_0={longitude} "
+        f"+proj={projection} +lat_0={latitude} +lon_0={longitude} "
         "+datum=WGS84 +units=m +no_defs +type=crs"
     )
 
@@ -63,10 +66,11 @@ def _measure(geometry: Any, source_crs: CRS | None) -> tuple[dict[str, Any] | No
         return None, "EMPTY_GEOMETRY"
 
     try:
-        metric_crs = _local_metric_crs(geometry, source_crs)
+        is_polygon = geom_type in {"Polygon", "MultiPolygon"}
+        metric_crs = _local_metric_crs(geometry, source_crs, measure_area=is_polygon)
         transformer = Transformer.from_crs(source_crs, metric_crs, always_xy=True)
         projected = transform(transformer.transform, geometry)
-        if geom_type in {"Polygon", "MultiPolygon"}:
+        if is_polygon:
             return {
                 "type": "area",
                 "value": projected.area,
@@ -79,8 +83,8 @@ def _measure(geometry: Any, source_crs: CRS | None) -> tuple[dict[str, Any] | No
             "unit": "metres",
             "crs": metric_crs.to_string(),
         }, "MEASURED"
-    except (ValueError, OverflowError) as exc:
-        logger.warning("feature_measurement_failed", extra={"geometry_type": geom_type, "error": str(exc)})
+    except Exception as exc:
+        logger.exception("feature_measurement_failed", extra={"geometry_type": geom_type, "error": str(exc)})
         return None, "MEASUREMENT_FAILED"
 
 
@@ -88,62 +92,69 @@ def process_file(file_id: str, filename: str, size_bytes: int, path: Path) -> di
     """Parse an upload, measure supported features, and persist the result."""
     is_kml = path.suffix.casefold() == ".kml"
     source_path = str(path)
-    vfs = None
     if path.suffix.casefold() == ".zip":
-        vfs = f"zip://{path.resolve().as_posix()}"
+        source_path = f"zip://{path.resolve().as_posix()}"
 
     features: list[dict[str, Any]] = []
     source_crs_labels: set[str] = set()
     feature_index = 0
 
     try:
-        layer_names = fiona.listlayers(source_path, vfs=vfs)
+        layer_names = [str(row[0]) for row in pyogrio.list_layers(source_path)]
         if not layer_names:
             raise ProcessingRejected("No readable geospatial layers were found")
 
         for layer_name in layer_names:
-            with fiona.open(source_path, layer=layer_name, vfs=vfs) as source:
-                source_crs = _crs_for_layer(source, is_kml)
-                crs_label = _crs_label(source_crs)
-                if crs_label:
-                    source_crs_labels.add(crs_label)
+            metadata, feature_ids, geometries, field_columns = read_layer(
+                source_path,
+                layer=layer_name,
+                return_fids=True,
+                datetime_as_string=True,
+            )
+            source_crs = _crs_for_layer(metadata.get("crs"), is_kml)
+            crs_label = _crs_label(source_crs)
+            if crs_label:
+                source_crs_labels.add(crs_label)
+            property_names = [str(field) for field in metadata.get("fields", [])]
 
-                for raw_feature in source:
-                    feature_id = str(raw_feature.id) if raw_feature.id is not None else str(feature_index)
-                    properties = dict(raw_feature.properties or {})
-                    raw_geometry = raw_feature.geometry
-                    if raw_geometry is None:
-                        features.append({
-                            "index": feature_index,
-                            "id": feature_id,
-                            "layer": layer_name,
-                            "geometry_type": None,
-                            "geometry": None,
-                            "crs": crs_label,
-                            "properties": properties,
-                            "measurement": None,
-                            "measurement_status": "NO_GEOMETRY",
-                        })
-                        feature_index += 1
-                        continue
-
-                    geometry = shape(raw_geometry)
-                    measurement, measurement_status = _measure(geometry, source_crs)
+            for layer_index, raw_geometry in enumerate(geometries):
+                feature_id = str(feature_ids[layer_index]) if feature_ids is not None else str(feature_index)
+                properties = {
+                    name: _python_value(field_columns[column_index][layer_index])
+                    for column_index, name in enumerate(property_names)
+                }
+                if raw_geometry is None:
                     features.append({
                         "index": feature_index,
                         "id": feature_id,
                         "layer": layer_name,
-                        "geometry_type": geometry.geom_type,
-                        "geometry": mapping(geometry),
+                        "geometry_type": None,
+                        "geometry": None,
                         "crs": crs_label,
                         "properties": properties,
-                        "measurement": measurement,
-                        "measurement_status": measurement_status,
+                        "measurement": None,
+                        "measurement_status": "NO_GEOMETRY",
                     })
                     feature_index += 1
+                    continue
+
+                geometry = from_wkb(raw_geometry)
+                measurement, measurement_status = _measure(geometry, source_crs)
+                features.append({
+                    "index": feature_index,
+                    "id": feature_id,
+                    "layer": layer_name,
+                    "geometry_type": geometry.geom_type,
+                    "geometry": mapping(geometry),
+                    "crs": crs_label,
+                    "properties": properties,
+                    "measurement": measurement,
+                    "measurement_status": measurement_status,
+                })
+                feature_index += 1
     except ProcessingRejected:
         raise
-    except (FionaError, OSError, ValueError, zipfile.BadZipFile) as exc:
+    except (DataSourceError, OSError, ValueError, TypeError, zipfile.BadZipFile) as exc:
         raise ProcessingRejected("The uploaded file could not be read as valid geospatial data") from exc
 
     if feature_index == 0:
@@ -166,3 +177,10 @@ def process_file(file_id: str, filename: str, size_bytes: int, path: Path) -> di
     }
     save_result(info, features)
     return info
+
+
+def _python_value(value: Any) -> Any:
+    """Convert NumPy scalar values from Pyogrio into JSON-friendly values."""
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
