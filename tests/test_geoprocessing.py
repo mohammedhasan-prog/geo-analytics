@@ -1,6 +1,16 @@
 """Unit tests for CRS-aware geometry measurements."""
 
+import atexit
+import os
+import shutil
 import unittest
+from pathlib import Path
+from uuid import uuid4
+
+_TEST_ROOT = Path(__file__).resolve().parent / f".geometry-tests-{uuid4().hex}"
+_TEST_ROOT.mkdir()
+os.environ["DATABASE_PATH"] = str(_TEST_ROOT / "results.sqlite3")
+atexit.register(shutil.rmtree, _TEST_ROOT, ignore_errors=True)
 
 from pyproj import CRS
 from shapely.geometry import LineString, Point, Polygon

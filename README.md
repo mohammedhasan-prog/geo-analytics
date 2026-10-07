@@ -4,7 +4,7 @@ Backend service for extracting features and measurements from geospatial files.
 
 ## Current progress
 
-Phases 1 through 5 are implemented: FastAPI foundation, validated uploads, CRS-aware measurements, persisted results, asynchronous jobs for large uploads, and Redis content-hash caching.
+Phases 1 through 6 are implemented, including geometry/API tests and a Locust load-test profile. Phase 7 containerization files are in place; the Docker image and Compose stack still need a local build and run.
 
 ## Setup
 
@@ -19,12 +19,26 @@ uvicorn app.main:app --reload
 
 The API runs at `http://127.0.0.1:8000`. Interactive API documentation is available at `/docs`.
 
-To install test-only dependencies and run the API smoke tests:
+To install test and load-testing dependencies and run the unit and API integration tests:
 
 ```powershell
 py -m pip install -r requirements-dev.txt
 py -m unittest discover -s tests -v
 ```
+
+The suite includes geometry calculation unit tests and API integration tests for uploads, measurements, cache reuse, and large-file job status. The asynchronous job tests mock Redis queue publication; use a running Redis server and RQ worker for a live queue check.
+
+## Container deployment
+
+Docker Compose starts the API, Redis, and one RQ worker. The API and worker share a persistent volume for SQLite results and uploaded files; Redis uses a separate persistent volume. The API runs as an unprivileged user in a multi-stage Python image. Pyogrio's PyPI wheels include GDAL, so the final image does not need GDAL build packages.
+
+```powershell
+docker compose up --build
+```
+
+Check `http://127.0.0.1:8000/health` and open `http://127.0.0.1:8000/docs`. To change the host port or cache/job threshold, set `API_PORT`, `CACHE_TTL_SECONDS`, or `ASYNC_THRESHOLD_BYTES` before starting Compose. Stop the services with `Ctrl+C`, then run `docker compose down`; persistent data volumes remain available for the next start.
+
+Compose deployment files are `Dockerfile`, `docker-compose.yml`, and `.dockerignore`.
 
 ## API
 
@@ -90,7 +104,19 @@ File summaries and feature results are stored in SQLite at `data/geospatial.sqli
 - `app/cache.py` - Redis-backed, SHA-256 keyed result cache and TTL.
 - `app/repository.py` - SQLite persistence for file summaries and features.
 - `app/logging_config.py` - JSON logging configuration.
+- `tests/test_geoprocessing.py` - geometry and CRS measurement unit tests.
+- `locustfile.py` - concurrent KML upload benchmark.
 
-## Next phases
+## Load testing
 
-Next: Phase 5 adds content-hash caching. Later phases cover load testing and deployment.
+Phase 6 load testing uses Locust. Start the API, then run the benchmark in another terminal:
+
+Create the CSV output directory first, then run the load profile:
+
+```powershell
+New-Item -ItemType Directory -Force results | Out-Null
+locust -f locustfile.py --host http://127.0.0.1:8000 --headless -u 200 -r 20 -t 2m --csv results/phase6
+```
+
+This ramps up to 200 simulated users at 20 users per second for two minutes. Uploads alternate between unique polygon and line KML files so processing is measured without cache hits; health checks run more often. Locust reports request count, failures, throughput, and response-time percentiles, with CSV output under `results/`. Adjust `-u`, `-r`, and `-t` for the machine and run duration. Treat this as a benchmark profile, not a preset service-level guarantee: record the machine, Python/GDAL versions, Redis state, and run settings when comparing results.
+

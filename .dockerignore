@@ -1,0 +1,11 @@
+.git
+.venv
+__pycache__/
+*.py[cod]
+tests/
+data/
+results/
+*.docx
+SRS.txt
+README.md
+requirements-dev.txt
