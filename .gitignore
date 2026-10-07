@@ -14,4 +14,7 @@ results/
 .env.*
 !.env.example
 
+# Project specification document
+SRS.txt
+
 SRS
