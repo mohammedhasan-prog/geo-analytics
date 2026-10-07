@@ -1,122 +1,253 @@
 # Geospatial File Measurement API
 
-Backend service for extracting features and measurements from geospatial files.
+A FastAPI service that accepts KML and zipped Shapefile uploads, extracts their features, calculates CRS-aware area or length measurements, and returns the results through an HTTP API.
 
-## Current progress
+## Features
 
-Phases 1 through 6 are implemented, including geometry/API tests and a Locust load-test profile. Phase 7 containerization files are in place; the Docker image and Compose stack still need a local build and run.
+- Stream uploads to disk, validate supported file types, and calculate a SHA-256 digest as each file arrives.
+- Measure Polygon and MultiPolygon area in square metres and LineString and MultiLineString length in metres.
+- Retain parsed feature geometry, attributes, CRS labels, measurements, and file summaries in SQLite.
+- Cache results in Redis for 24 hours by default, and queue uploads larger than 5 MiB through RQ.
+- Provide JSON logs, a health endpoint, an OpenAPI page, automated tests, a Locust load profile, and a Docker Compose deployment.
+
+Supported uploads are `.kml` and `.zip` archives containing matching `.shp`, `.shx`, and `.dbf` Shapefile components. Point features are returned with `UNSUPPORTED_GEOMETRY`; point-to-point distance is not implemented yet.
 
 ## Setup
 
-Requires Python 3.10 or newer.
+### Run locally
+
+Use Python 3.12 or newer (3.10+ is supported). In PowerShell:
 
 ```powershell
-py -m venv .venv
+py -3.12 -m venv .venv
 .venv\Scripts\Activate.ps1
-py -m pip install -r requirements.txt
-uvicorn app.main:app --reload
+python -m pip install -r requirements.txt
+python -m uvicorn app.main:app --reload
 ```
 
-The API runs at `http://127.0.0.1:8000`. Interactive API documentation is available at `/docs`.
+The API listens at `http://127.0.0.1:8000`; interactive documentation is at `http://127.0.0.1:8000/docs`.
 
-To install test and load-testing dependencies and run the unit and API integration tests:
+Redis is optional for small synchronous uploads: cache reads/writes fail open, and processing continues without the cache. Redis is required for cache hits and for accepting uncached large uploads. To use the RQ worker locally, run a Redis server and in a second terminal:
 
 ```powershell
-py -m pip install -r requirements-dev.txt
-py -m unittest discover -s tests -v
+$env:REDIS_URL = "redis://localhost:6379/0"
+rq worker-pool --url $env:REDIS_URL --num-workers 1 --worker-class rq.worker.SpawnWorker --serializer json geospatial-measurements
 ```
 
-The suite includes geometry calculation unit tests and API integration tests for uploads, measurements, cache reuse, and large-file job status. The asynchronous job tests mock Redis queue publication; use a running Redis server and RQ worker for a live queue check.
+The Windows worker-pool command uses RQ's spawn worker. On Linux or macOS, use `rq worker --url $env:REDIS_URL --serializer json geospatial-measurements`.
 
-## Container deployment
+### Run with Docker Compose
 
-Docker Compose starts the API, Redis, and one RQ worker. The API and worker share a persistent volume for SQLite results and uploaded files; Redis uses a separate persistent volume. The API runs as an unprivileged user in a multi-stage Python image. Pyogrio's PyPI wheels include GDAL, so the final image does not need GDAL build packages.
+Docker Compose starts the API, Redis, and one worker. The API and worker share a persistent volume for SQLite and uploaded files; Redis uses a separate volume.
 
 ```powershell
 docker compose up --build
 ```
 
-Check `http://127.0.0.1:8000/health` and open `http://127.0.0.1:8000/docs`. To change the host port or cache/job threshold, set `API_PORT`, `CACHE_TTL_SECONDS`, or `ASYNC_THRESHOLD_BYTES` before starting Compose. Stop the services with `Ctrl+C`, then run `docker compose down`; persistent data volumes remain available for the next start.
+Visit `http://127.0.0.1:8000/health` or `http://127.0.0.1:8000/docs`. Set `API_PORT`, `CACHE_TTL_SECONDS`, or `ASYNC_THRESHOLD_BYTES` before starting Compose to change the host port, cache lifetime, or async threshold. Stop the stack with `Ctrl+C`, then run `docker compose down`; named volumes are retained.
 
-Compose deployment files are `Dockerfile`, `docker-compose.yml`, and `.dockerignore`.
+### Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection for cache and RQ |
+| `DATABASE_PATH` | `data/geospatial.sqlite3` | SQLite database location |
+| `UPLOAD_DIRECTORY` | `data/uploads` | Stored uploads location |
+| `MAX_UPLOAD_SIZE_BYTES` | `104857600` | Maximum upload size (100 MiB) |
+| `ASYNC_THRESHOLD_BYTES` | `5242880` | Uploads above this size are queued (5 MiB) |
+| `CACHE_TTL_SECONDS` | `86400` | Redis result cache lifetime (24 hours) |
 
 ## API
 
-### Health check
+### `GET /health`
 
-`GET /health` returns `200 OK` while the API process is running:
+Returns `200 OK` when the API process is responding.
 
 ```json
 {"status":"ok"}
 ```
 
-### Upload and process a file
+### `POST /api/v1/measure`
 
-`POST /api/v1/measure` accepts one `multipart/form-data` field named `file`. Supported inputs are `.kml` and `.zip` archives containing matching `.shp`, `.shx`, and `.dbf` components. The default maximum file size is 100 MiB; set `MAX_UPLOAD_SIZE_BYTES` to change it. Uploaded files are stored under `data/uploads` by default; set `UPLOAD_DIRECTORY` to change that location.
-
-Files larger than 5 MiB are queued for background processing and return `202 Accepted`; set `ASYNC_THRESHOLD_BYTES` to change the threshold. Smaller uploads continue to process synchronously.
+Upload one file as `multipart/form-data` with a `file` field:
 
 ```powershell
 curl.exe -F "file=@survey.kml" http://127.0.0.1:8000/api/v1/measure
 ```
 
-Successful upload response (`201 Created`):
+For a synchronous upload (HTTP `201 Created`):
 
 ```json
-{"id":"<file-id>","filename":"survey.kml","size_bytes":1234,"feature_count":12,"crs":"EPSG:4326","status":"COMPLETED"}
+{
+  "id": "<file-id>",
+  "filename": "survey.kml",
+  "size_bytes": 1234,
+  "feature_count": 1,
+  "crs": "EPSG:4326",
+  "status": "COMPLETED"
+}
 ```
 
-Uploads are SHA-256 hashed while streaming. The API caches processed features and summary metadata in Redis for 24 hours by default (`CACHE_TTL_SECONDS` changes the TTL). An identical upload reuses the measurements while storing a summary for its new file ID and filename; the response includes `"cache_hit": true`. Cache reads and writes are best-effort, so a Redis cache outage falls back to normal synchronous processing. Large uncached uploads still require Redis and an RQ worker.
+When a matching SHA-256 result is cached, the same response also has `"cache_hit": true`; the result is saved under the new upload ID and filename. Uploads larger than the configured threshold normally return HTTP `202 Accepted`:
 
-Unsupported, oversized, empty, malformed, or unreadable files return `400 Bad Request`.
+```json
+{
+  "job_id": "<job-id>",
+  "status": "QUEUED",
+  "status_url": "/api/v1/measure/<job-id>"
+}
+```
 
-### Large-file job status
+Malformed, unsupported, empty, oversized, or unreadable uploads return HTTP `400`. A large uncached upload returns `503` if the Redis queue cannot accept it.
 
-`GET /api/v1/measure/{job_id}` returns `QUEUED`, `RUNNING`, `COMPLETED`, or `FAILED`. A completed job response includes the file summary and processed features. A failed job includes a safe error message.
+### `GET /api/v1/measure/{job_id}`
 
-Large-file processing requires a Redis server and at least one RQ worker. Set `REDIS_URL` if Redis is not at `redis://localhost:6379/0`. Start a Redis server, then start the API and worker in separate terminals. On Windows, use RQ's spawn-based worker:
+Poll a large upload. While it is processing:
+
+```json
+{"job_id":"<job-id>","file_id":"<file-id>","status":"RUNNING"}
+```
+
+When complete, the response includes the summary and feature list:
+
+```json
+{
+  "job_id": "<job-id>",
+  "file_id": "<file-id>",
+  "status": "COMPLETED",
+  "result": {
+    "file": {"id":"<file-id>","filename":"survey.kml","feature_count":1,"crs":"EPSG:4326","status":"COMPLETED"},
+    "features": [
+      {"index":0,"geometry_type":"Polygon","measurement":{"type":"area","value":12300,"unit":"square_metres","crs":"EPSG:32631"},"measurement_status":"MEASURED"}
+    ]
+  }
+}
+```
+
+The `result.file` object also contains `size_bytes`. Failed jobs return `status: FAILED` and a safe `error` message. Unknown job IDs return `404`.
+
+### `GET /api/files/{id}/`
+
+Get a stored file summary:
+
+```json
+{"id":"<file-id>","filename":"survey.kml","size_bytes":1234,"feature_count":1,"crs":"EPSG:4326","status":"COMPLETED"}
+```
+
+### `GET /api/files/{id}/measurements/`
+
+Get extracted feature geometry, properties, CRS, and measurements:
+
+```json
+{
+  "id": "<file-id>",
+  "feature_count": 1,
+  "crs": "EPSG:4326",
+  "features": [
+    {
+      "index": 0,
+      "id": "1",
+      "layer": "Placemarks",
+      "geometry_type": "Polygon",
+      "crs": "EPSG:4326",
+      "properties": {"Name":"field"},
+      "measurement": {"type":"area","value":12300,"unit":"square_metres","crs":"EPSG:32631"},
+      "measurement_status": "MEASURED"
+    }
+  ]
+}
+```
+
+Unknown file IDs return `404`. Point and other unsupported feature types are still returned, with a null measurement and a status explaining why they were not measured.
+
+## Architecture
+
+### Application structure
+
+- `app/main.py` — FastAPI lifecycle, HTTP routes, and request/error handling.
+- `app/uploads.py` — chunked upload persistence, size/type checks, and KML/Shapefile ZIP validation.
+- `app/geoprocessing.py` — Pyogrio layer reading and Shapely/PyProj feature measurements.
+- `app/cache.py` — SHA-256 keyed Redis result cache with configurable TTL.
+- `app/jobs.py` — RQ publishing and background job execution.
+- `app/repository.py` — SQLite persistence for file summaries, features, and job state.
+- `app/logging_config.py` — structured JSON logs.
+- `tests/` — geometry unit and API integration tests.
+- `locustfile.py` — concurrent KML upload benchmark profile.
+- `Dockerfile`, `docker-compose.yml` — container build and API/Redis/worker services.
+
+### File-processing flow
+
+```mermaid
+flowchart LR
+    A[Multipart upload] --> B[Stream to disk and hash]
+    B --> C[Validate size, extension and structure]
+    C --> D{Redis cache hit?}
+    D -- Yes --> E[Save cached result for new file ID]
+    D -- No, small file --> F[Process synchronously]
+    D -- No, large file --> G[Publish RQ job]
+    G --> H[Worker processes file]
+    F --> I[Persist summary and features in SQLite]
+    H --> I
+    I --> J[Cache result with TTL]
+```
+
+Small uploads are parsed in the request flow. Large uploads are accepted as jobs and processed by a worker. Clients poll the job status route. Results are persisted in SQLite, and Redis caches content-addressed results to avoid repeating measurements.
+
+### Measurement calculation and CRS handling
+
+Pyogrio reads each file's layers and feature fields; Shapely provides geometry types, transforms, and metric geometry operations. PyProj transforms each supported geometry from its source CRS to a local projected CRS before measuring it. The code selects a UTM zone from the feature location for common latitudes, and a local equal-area or equidistant projection for polar polygons or lines.
+
+KML is treated as EPSG:4326 if the reader does not report its standard CRS. Shapefile CRS is taken from its metadata, usually the accompanying `.prj`. If a Shapefile has no CRS, its features are returned with `CRS_UNKNOWN` and no metric value; the API does not guess units. Polygon area and line length are calculated per feature. Point-to-point distance and polygon perimeter are not currently exposed.
+
+## Design decisions
+
+| Decision | Reason | Alternative considered |
+| --- | --- | --- |
+| FastAPI with Pyogrio, Shapely, and PyProj | Python API development with geospatial work handled by compiled libraries and explicit CRS transforms | Go/Rust web frameworks or a PostGIS processing service |
+| Stream uploads to disk before parsing | Bounds memory use and allows large files to move to background workers | Read each multipart body fully into memory |
+| Redis plus RQ for large files | Keeps long measurements out of request handling and supports polling | Process every file synchronously or add a more complex broker such as RabbitMQ |
+| SQLite for persisted results | Keeps the initial deployment small and easy to run locally | PostgreSQL/PostGIS for multi-host concurrency and spatial queries |
+| SHA-256 content cache with a 24-hour TTL | Identical inputs can reuse expensive results without an unbounded cache | Cache by filename (can collide for different contents) or do not cache |
+| Python slim multi-stage Docker image | Keeps build dependencies out of the runtime image while retaining compatibility with geospatial wheels | Distroless/Alpine images, which require extra validation for native geospatial dependencies |
+
+## Tests and load testing
+
+Run geometry unit tests and API integration tests with:
 
 ```powershell
-$env:REDIS_URL = "redis://localhost:6379/0"
-rq worker-pool --url $env:REDIS_URL --num-workers 2 --worker-class rq.worker.SpawnWorker --serializer json geospatial-measurements
+python -m pip install -r requirements-dev.txt
+python -m unittest discover -s tests -v
 ```
 
-On Linux or macOS, omit `--worker-class rq.worker.SpawnWorker` to use RQ's default process worker. The API returns `503 Service Unavailable` for large uploads when Redis cannot accept the job; it removes that upload so it can be retried.
+The integration tests mock Redis queue publication and cache behavior. The Docker Compose stack has also been exercised with a health request, duplicate uploads (cache hit), and a large upload completed by the worker. This verifies a local end-to-end run, not production capacity.
 
-### File information
-
-`GET /api/files/{id}/` returns the persisted file summary, including filename, feature count, CRS, and status.
-
-### Feature measurements
-
-`GET /api/files/{id}/measurements/` returns each feature's index, geometry, CRS, properties, and optional measurement. Polygon and MultiPolygon area is in square metres; LineString and MultiLineString length is in metres. Point and other unsupported geometries remain in the response with no measurement and a status. Measurements transform each feature into a local projected CRS selected from its location. KML is treated as EPSG:4326 when the reader does not report its standard CRS. Shapefile features without a declared CRS remain available but have no measurement.
-
-Unknown file IDs return `404 Not Found`.
-
-## Storage and structure
-
-File summaries and feature results are stored in SQLite at `data/geospatial.sqlite3` by default; set `DATABASE_PATH` to change that location.
-
-- `app/main.py` - FastAPI routes and application lifecycle.
-- `app/uploads.py` - chunked upload storage and file validation.
-- `app/geoprocessing.py` - Pyogrio feature reading and Shapely/PyProj measurements.
-- `app/jobs.py` - Redis Queue publishing and measurement job execution.
-- `app/cache.py` - Redis-backed, SHA-256 keyed result cache and TTL.
-- `app/repository.py` - SQLite persistence for file summaries and features.
-- `app/logging_config.py` - JSON logging configuration.
-- `tests/test_geoprocessing.py` - geometry and CRS measurement unit tests.
-- `locustfile.py` - concurrent KML upload benchmark.
-
-## Load testing
-
-Phase 6 load testing uses Locust. Start the API, then run the benchmark in another terminal:
-
-Create the CSV output directory first, then run the load profile:
+To run the Locust load profile against the running API, create the output directory and run:
 
 ```powershell
 New-Item -ItemType Directory -Force results | Out-Null
 locust -f locustfile.py --host http://127.0.0.1:8000 --headless -u 200 -r 20 -t 2m --csv results/phase6
 ```
 
-This ramps up to 200 simulated users at 20 users per second for two minutes. Uploads alternate between unique polygon and line KML files so processing is measured without cache hits; health checks run more often. Locust reports request count, failures, throughput, and response-time percentiles, with CSV output under `results/`. Adjust `-u`, `-r`, and `-t` for the machine and run duration. Treat this as a benchmark profile, not a preset service-level guarantee: record the machine, Python/GDAL versions, Redis state, and run settings when comparing results.
+It ramps up to 200 users and alternates unique polygon and line KML files to avoid cache hits. The profile is provided, but no benchmark numbers are claimed here; results depend on the host and runtime configuration.
 
+## Learning and future scope
+
+### Learning
+
+- Geographic coordinates in longitude and latitude are angular units, so accurate metre and square-metre measurements require a suitable projected CRS.
+- Streaming, validation, asynchronous jobs, and caching solve different bottlenecks: ingestion memory, invalid input cost, request latency, and repeated work.
+- Sharing upload and database storage between the API and worker is required for a queued job to process the file and persist its result.
+- Mocked tests are useful for repeatable API behavior, while a live Redis/worker run checks the integration between services.
+
+### Future scope
+
+- Add point-to-point distance, polygon perimeter, and totals across selected features.
+- Support GeoJSON and more archive/layout variants with clear format validation.
+- Add PostgreSQL/PostGIS for multi-instance deployment and spatial querying.
+- Add cache stampede protection, authentication, rate limits, and configurable retention of raw uploads.
+- Run and publish Locust benchmark results for stated hardware and deployment settings.
+- Add CI checks and deployment automation for a hosted environment.
+
+## Submission repository
+
+The public repository is [github.com/mohammedhasan-prog/geo-analytics](https://github.com/mohammedhasan-prog/geo-analytics).
