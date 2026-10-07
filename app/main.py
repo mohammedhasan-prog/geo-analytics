@@ -12,17 +12,19 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from uuid import uuid4
 
+from app.cache import get_cached_measurement, set_cached_measurement
 from app.geoprocessing import ProcessingRejected, process_file
 from app.jobs import ASYNC_THRESHOLD_BYTES, enqueue_measurement
 from app.logging_config import configure_logging
 from app.repository import (
     create_measurement_job,
     delete_measurement_job,
-    get_file_features,
     get_file_info,
+    get_file_features,
     get_measurement_job,
     get_processed_file,
     initialize_repository,
+    save_result,
 )
 from app.uploads import MAX_UPLOAD_BYTES, UPLOAD_DIRECTORY, UploadRejected, save_upload
 
@@ -52,7 +54,7 @@ async def health_check() -> dict[str, str]:
 
 
 @app.post("/api/v1/measure", status_code=201, tags=["measurements"])
-async def upload_for_measurement(request: Request) -> dict[str, str | int | None]:
+async def upload_for_measurement(request: Request) -> dict[str, Any]:
     """Accept a KML or zipped Shapefile, process it, and retain its results."""
     content_type = request.headers.get("content-type", "")
     if not content_type.lower().startswith("multipart/form-data"):
@@ -79,6 +81,22 @@ async def upload_for_measurement(request: Request) -> dict[str, str | int | None
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     file_path = UPLOAD_DIRECTORY / f"{uploaded['id']}{Path(uploaded['filename']).suffix.casefold()}"
+    cached = await run_in_threadpool(get_cached_measurement, str(uploaded["sha256"]))
+    if cached is not None:
+        result = {
+            "id": uploaded["id"],
+            "filename": uploaded["filename"],
+            "size_bytes": uploaded["size_bytes"],
+            "feature_count": cached["feature_count"],
+            "crs": cached["crs"],
+            "status": "COMPLETED",
+        }
+        await run_in_threadpool(save_result, result, cached["features"])
+        file_path.unlink(missing_ok=True)
+        result["cache_hit"] = True
+        logger.info("measurement_cache_hit", extra={"file_id": uploaded["id"]})
+        return result
+
     if int(uploaded["size_bytes"]) > ASYNC_THRESHOLD_BYTES:
         job_id = uuid4().hex
         await run_in_threadpool(create_measurement_job, job_id, str(uploaded["id"]))
@@ -90,6 +108,7 @@ async def upload_for_measurement(request: Request) -> dict[str, str | int | None
                 str(uploaded["filename"]),
                 int(uploaded["size_bytes"]),
                 str(file_path),
+                str(uploaded["sha256"]),
             )
         except Exception:
             await run_in_threadpool(delete_measurement_job, job_id)
@@ -129,6 +148,14 @@ async def upload_for_measurement(request: Request) -> dict[str, str | int | None
         file_path.unlink(missing_ok=True)
         raise
 
+    features = await run_in_threadpool(get_file_features, str(uploaded["id"]))
+    if features is None:
+        raise RuntimeError("Processed measurement result was not persisted")
+    await run_in_threadpool(
+        set_cached_measurement,
+        str(uploaded["sha256"]),
+        {"feature_count": result["feature_count"], "crs": result["crs"], "features": features},
+    )
     logger.info("upload_processed", extra={"file_id": result["id"], "feature_count": result["feature_count"]})
     return result
 

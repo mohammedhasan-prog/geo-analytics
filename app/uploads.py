@@ -1,6 +1,7 @@
 """Streaming upload storage and lightweight format validation."""
 
 import os
+import hashlib
 import shutil
 import tempfile
 import xml.etree.ElementTree as ET
@@ -84,6 +85,7 @@ async def save_upload(upload: UploadFile) -> dict[str, str | int]:
     file_id = uuid4().hex
     stored_path = UPLOAD_DIRECTORY / f"{file_id}{extension}"
     size = 0
+    content_hash = hashlib.sha256()
 
     try:
         with tempfile.NamedTemporaryFile(
@@ -95,6 +97,7 @@ async def save_upload(upload: UploadFile) -> dict[str, str | int]:
                 if size > MAX_UPLOAD_BYTES:
                     raise UploadRejected(f"File exceeds the {MAX_UPLOAD_BYTES}-byte upload limit")
                 temp_file.write(chunk)
+                content_hash.update(chunk)
 
         if size == 0:
             raise UploadRejected("Uploaded file is empty")
@@ -117,5 +120,6 @@ async def save_upload(upload: UploadFile) -> dict[str, str | int]:
         "id": file_id,
         "filename": original_name,
         "size_bytes": size,
+        "sha256": content_hash.hexdigest(),
         "status": "RECEIVED",
     }

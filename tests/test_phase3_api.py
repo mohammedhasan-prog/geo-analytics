@@ -82,6 +82,49 @@ class Phase3ApiTests(unittest.TestCase):
         self.assertIsNone(feature["measurement"])
         self.assertEqual(feature["measurement_status"], "UNSUPPORTED_GEOMETRY")
 
+    def test_content_hash_cache_reuses_results_for_new_upload_id(self) -> None:
+        kml = b'''<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark>
+          <name>cached polygon</name><Polygon><outerBoundaryIs><LinearRing><coordinates>
+          0,0 0.001,0 0.001,0.001 0,0.001 0,0
+          </coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></Document></kml>'''
+        cache: dict[str, dict] = {}
+
+        def cache_get(digest: str):
+            return cache.get(digest)
+
+        def cache_set(digest: str, value: dict):
+            cache[digest] = value
+
+        with patch("app.main.get_cached_measurement", side_effect=cache_get), patch(
+            "app.main.set_cached_measurement", side_effect=cache_set
+        ):
+            first = self.client.post("/api/v1/measure", files={"file": ("original.kml", kml)})
+            self.assertEqual(first.status_code, 201, first.text)
+            with patch("app.main.process_file", side_effect=AssertionError("cache hit should skip processing")):
+                second = self.client.post("/api/v1/measure", files={"file": ("copy.kml", kml)})
+
+        self.assertEqual(second.status_code, 201, second.text)
+        reused = second.json()
+        self.assertTrue(reused["cache_hit"])
+        self.assertNotEqual(first.json()["id"], reused["id"])
+        self.assertEqual(reused["filename"], "copy.kml")
+        self.assertEqual(self.client.get(f"/api/files/{reused['id']}/").json()["filename"], "copy.kml")
+        self.assertEqual(len(self.client.get(f"/api/files/{reused['id']}/measurements/").json()["features"]), 1)
+
+    def test_large_cached_upload_skips_queue(self) -> None:
+        kml = b'''<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark>
+          <name>large cached</name><Polygon><outerBoundaryIs><LinearRing><coordinates>
+          0,0 0.001,0 0.001,0.001 0,0.001 0,0
+          </coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></Document></kml>''' + b" " * (ASYNC_THRESHOLD_BYTES + 1)
+        cached = {"feature_count": 0, "crs": "EPSG:4326", "features": []}
+        with patch("app.main.get_cached_measurement", return_value=cached), patch(
+            "app.main.enqueue_measurement"
+        ) as enqueue:
+            response = self.client.post("/api/v1/measure", files={"file": ("large.kml", kml)})
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertTrue(response.json()["cache_hit"])
+        enqueue.assert_not_called()
+
     def _make_shapefile_zip(self, directory: Path, crs: str | None) -> Path:
         shapefile_path = directory / "routes.shp"
         write(

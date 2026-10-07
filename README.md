@@ -4,7 +4,7 @@ Backend service for extracting features and measurements from geospatial files.
 
 ## Current progress
 
-Phases 1 through 4 are implemented: FastAPI foundation, validated uploads, CRS-aware measurements, persisted results, and Redis-backed asynchronous jobs for large uploads.
+Phases 1 through 5 are implemented: FastAPI foundation, validated uploads, CRS-aware measurements, persisted results, asynchronous jobs for large uploads, and Redis content-hash caching.
 
 ## Setup
 
@@ -52,6 +52,8 @@ Successful upload response (`201 Created`):
 {"id":"<file-id>","filename":"survey.kml","size_bytes":1234,"feature_count":12,"crs":"EPSG:4326","status":"COMPLETED"}
 ```
 
+Uploads are SHA-256 hashed while streaming. The API caches processed features and summary metadata in Redis for 24 hours by default (`CACHE_TTL_SECONDS` changes the TTL). An identical upload reuses the measurements while storing a summary for its new file ID and filename; the response includes `"cache_hit": true`. Cache reads and writes are best-effort, so a Redis cache outage falls back to normal synchronous processing. Large uncached uploads still require Redis and an RQ worker.
+
 Unsupported, oversized, empty, malformed, or unreadable files return `400 Bad Request`.
 
 ### Large-file job status
@@ -85,6 +87,7 @@ File summaries and feature results are stored in SQLite at `data/geospatial.sqli
 - `app/uploads.py` - chunked upload storage and file validation.
 - `app/geoprocessing.py` - Pyogrio feature reading and Shapely/PyProj measurements.
 - `app/jobs.py` - Redis Queue publishing and measurement job execution.
+- `app/cache.py` - Redis-backed, SHA-256 keyed result cache and TTL.
 - `app/repository.py` - SQLite persistence for file summaries and features.
 - `app/logging_config.py` - JSON logging configuration.
 
