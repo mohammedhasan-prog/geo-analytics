@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from uuid import uuid4
@@ -45,6 +45,14 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+FRONTEND_FILE = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
+
+
+@app.get("/", include_in_schema=False)
+async def frontend() -> FileResponse:
+    """Serve the lightweight browser dashboard from the API origin."""
+    return FileResponse(FRONTEND_FILE, media_type="text/html")
 
 
 @app.get("/health", tags=["health"])

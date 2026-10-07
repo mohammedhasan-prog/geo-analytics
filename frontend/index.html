@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f6f1">
+  <title>Fieldnote — Geospatial measurements</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #202821;
+      --muted: #718078;
+      --paper: #f4f6f1;
+      --card: #fff;
+      --line: #e4e9e2;
+      --green: #376b4d;
+      --green-dark: #28553b;
+      --green-soft: #eaf2eb;
+      --amber: #a96827;
+      --red: #a5463a;
+      --shadow: 0 18px 55px rgba(41, 58, 45, .08);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(ellipse at 90% 0%, rgba(205, 222, 200, .38), transparent 32rem),
+        var(--paper);
+      color: var(--ink);
+      font: 15px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    .shell { max-width: 1120px; margin: 0 auto; padding: 27px 30px 56px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .brand { display: flex; align-items: center; gap: 11px; font-weight: 750; letter-spacing: -.035em; }
+    .brand-mark { display: grid; place-items: center; width: 35px; height: 35px; border-radius: 11px; background: var(--green); color: white; }
+    .brand-mark svg { width: 21px; height: 21px; }
+    .connection { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #b0b9b1; box-shadow: 0 0 0 3px rgba(176, 185, 177, .15); }
+    .dot.online { background: #4d9b63; box-shadow: 0 0 0 3px rgba(77, 155, 99, .14); }
+    .dot.offline { background: var(--red); box-shadow: 0 0 0 3px rgba(165, 70, 58, .13); }
+    .intro { max-width: 730px; margin: 69px auto 35px; text-align: center; }
+    .eyebrow { color: var(--green); font-size: 11px; font-weight: 750; letter-spacing: .17em; text-transform: uppercase; }
+    h1 { margin: 12px 0 13px; font-family: Georgia, "Times New Roman", serif; font-size: clamp(37px, 6vw, 58px); font-weight: 500; letter-spacing: -.045em; line-height: 1.06; }
+    .intro p { margin: 0 auto; max-width: 600px; color: var(--muted); font-size: 16px; }
+    .workspace { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr); gap: 21px; align-items: start; }
+    .card { overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: var(--card); box-shadow: var(--shadow); }
+    .card-head { display: flex; align-items: start; justify-content: space-between; gap: 14px; padding: 22px 24px 16px; }
+    .card-head h2 { margin: 0; font-size: 16px; letter-spacing: -.02em; }
+    .card-head p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+    .step { display: grid; place-items: center; flex: 0 0 27px; width: 27px; height: 27px; border: 1px solid var(--line); border-radius: 50%; color: var(--green); font-size: 12px; font-weight: 700; }
+    .dropzone { display: grid; justify-items: center; margin: 4px 20px 16px; padding: 29px 18px 25px; border: 1.5px dashed #cbd7ca; border-radius: 14px; background: #fafcf9; text-align: center; transition: border-color .2s, background .2s, transform .2s; }
+    .dropzone.drag { border-color: var(--green); background: var(--green-soft); transform: scale(1.01); }
+    .upload-icon { display: grid; place-items: center; width: 45px; height: 45px; margin-bottom: 12px; border-radius: 14px; background: var(--green-soft); color: var(--green); }
+    .upload-icon svg { width: 22px; height: 22px; }
+    .drop-title { margin: 0; font-size: 14px; font-weight: 650; }
+    .drop-copy { margin: 4px 0 15px; color: var(--muted); font-size: 12px; }
+    .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px; }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 38px; padding: 0 14px; border: 1px solid var(--line); border-radius: 9px; background: white; color: var(--ink); font-size: 12px; font-weight: 650; transition: .18s ease; }
+    .button:hover:not(:disabled) { border-color: #b6c7b7; background: #f7faf6; }
+    .button.primary { border-color: var(--green); background: var(--green); color: #fff; }
+    .button.primary:hover:not(:disabled) { background: var(--green-dark); }
+    .button:disabled { cursor: wait; opacity: .55; }
+    .privacy { display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 14px; color: #87928a; font-size: 11px; }
+    .privacy svg { width: 13px; height: 13px; }
+    #file-input { display: none; }
+    .file-row { display: none; align-items: center; gap: 10px; margin: 0 20px 18px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; }
+    .file-row.visible { display: flex; }
+    .file-type { display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 8px; background: #f2f5f0; color: var(--green); font-size: 9px; font-weight: 800; }
+    .file-meta { min-width: 0; flex: 1; }
+    .file-name { overflow: hidden; color: var(--ink); font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+    .file-size { color: var(--muted); font-size: 11px; }
+    .remove-file { display: grid; place-items: center; width: 27px; height: 27px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); }
+    .remove-file:hover { background: #f2f4f1; color: var(--ink); }
+    .submit-wrap { padding: 0 20px 20px; }
+    .submit-wrap .button { width: 100%; min-height: 43px; }
+    .note { margin: 0; padding: 13px 23px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+    .note strong { color: #48574d; font-weight: 650; }
+    .result-card { min-height: 306px; }
+    .result-head { border-bottom: 1px solid var(--line); }
+    .result-body { padding: 20px 23px 23px; }
+    .empty-state { display: grid; min-height: 214px; align-content: center; justify-items: center; color: #9aa49b; text-align: center; }
+    .empty-state svg { width: 43px; height: 43px; margin-bottom: 10px; color: #b9c5b8; }
+    .empty-state strong { color: #758178; font-size: 13px; font-weight: 650; }
+    .empty-state span { margin-top: 4px; font-size: 11px; }
+    .state-line { display: flex; align-items: center; gap: 9px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fbfcfa; color: #58665d; font-size: 12px; }
+    .state-line.error { border-color: #f0d9d4; background: #fff9f7; color: var(--red); }
+    .state-line.success { border-color: #d8e9da; background: #f6fbf6; color: var(--green); }
+    .spinner { width: 15px; height: 15px; border: 2px solid #dce7dc; border-top-color: var(--green); border-radius: 50%; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin: 15px 0 18px; }
+    .metric { min-width: 0; padding: 12px 12px 11px; border: 1px solid var(--line); border-radius: 10px; background: #fcfdfb; }
+    .metric-label { color: var(--muted); font-size: 10px; }
+    .metric-value { overflow: hidden; margin-top: 4px; font-size: 15px; font-weight: 720; letter-spacing: -.025em; text-overflow: ellipsis; white-space: nowrap; }
+    .result-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; color: var(--muted); font-size: 11px; }
+    .pill { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 99px; background: var(--green-soft); color: var(--green); font-size: 10px; font-weight: 700; }
+    .pill.amber { background: #fbf1e5; color: var(--amber); }
+    .feature-list { display: grid; gap: 8px; max-height: 340px; overflow: auto; }
+    .feature { padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+    .feature-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .feature-name { color: #334238; font-size: 12px; font-weight: 680; }
+    .feature-type { color: #76847a; font-size: 10px; }
+    .feature-measure { margin-top: 9px; color: var(--green-dark); font-size: 17px; font-weight: 730; letter-spacing: -.025em; }
+    .feature-measure small { color: #738078; font-size: 10px; font-weight: 550; letter-spacing: 0; }
+    .feature-foot { margin-top: 5px; color: #8a958d; font-size: 10px; }
+    .raw-toggle { margin-top: 14px; padding: 0; border: 0; background: transparent; color: var(--green); font-size: 11px; font-weight: 650; }
+    .raw-toggle:hover { text-decoration: underline; }
+    .raw-json { display: none; max-height: 230px; overflow: auto; margin-top: 9px; padding: 12px; border-radius: 9px; background: #202821; color: #dce9dc; font: 10px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .raw-json.visible { display: block; }
+    .footer { margin-top: 25px; color: #929d94; font-size: 10px; text-align: center; }
+    .footer a { color: #64776a; text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
+    @media (max-width: 760px) {
+      .shell { padding: 20px 16px 38px; }
+      .intro { margin: 48px auto 27px; }
+      .workspace { grid-template-columns: 1fr; }
+      .result-card { min-height: 270px; }
+    }
+    @media (max-width: 420px) {
+      .connection { font-size: 11px; }
+      .intro p { font-size: 14px; }
+      .card-head { padding-right: 18px; padding-left: 18px; }
+      .dropzone { margin-right: 13px; margin-left: 13px; }
+      .metrics { gap: 6px; }
+      .metric { padding: 10px 8px; }
+      .metric-value { font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 18.5 9.2 6l5 12.5L20 5.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="4" cy="18.5" r="1.7" fill="currentColor"/><circle cx="20" cy="5.5" r="1.7" fill="currentColor"/></svg>
+        </span>
+        <span>fieldnote<span style="color:#7f9382;font-weight:500"> / geo</span></span>
+      </div>
+      <div class="connection" aria-live="polite"><span id="health-dot" class="dot"></span><span id="health-label">Checking API…</span></div>
+    </header>
+
+    <section class="intro">
+      <div class="eyebrow">Geospatial measurement workspace</div>
+      <h1>Give your map data<br>some dimension.</h1>
+      <p>Upload a KML or zipped Shapefile to extract features and calculate real-world area and length measurements.</p>
+    </section>
+
+    <section class="workspace" aria-label="Measurement workspace">
+      <section class="card upload-card" aria-labelledby="upload-title">
+        <div class="card-head">
+          <div><h2 id="upload-title">Add a geospatial file</h2><p>Choose a file or try the included sample.</p></div>
+          <span class="step">01</span>
+        </div>
+        <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Choose a KML or zipped Shapefile">
+          <span class="upload-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+          <p class="drop-title">Drop your file here</p>
+          <p class="drop-copy">KML or zipped Shapefile · up to 100 MB</p>
+          <div class="actions">
+            <button id="browse-button" class="button" type="button">Browse files</button>
+            <button id="sample-button" class="button" type="button">Use sample KML</button>
+          </div>
+          <input id="file-input" type="file" accept=".kml,.zip,application/vnd.google-earth.kml+xml,application/zip">
+        </div>
+        <div id="file-row" class="file-row">
+          <span class="file-type" id="file-type">KML</span>
+          <div class="file-meta"><div class="file-name" id="file-name"></div><div class="file-size" id="file-size"></div></div>
+          <button id="remove-button" class="remove-file" type="button" aria-label="Remove selected file">✕</button>
+        </div>
+        <div class="submit-wrap"><button id="upload-button" class="button primary" type="button" disabled>Measure file <span aria-hidden="true" style="margin-left:7px">↗</span></button></div>
+        <div class="note"><strong>CRS aware</strong> Measurements are projected to a local metric CRS for better accuracy.</div>
+      </section>
+
+      <section class="card result-card" aria-labelledby="result-title">
+        <div class="card-head result-head">
+          <div><h2 id="result-title">Measurement results</h2><p>Feature details will appear here.</p></div>
+          <span class="step">02</span>
+        </div>
+        <div id="result-body" class="result-body">
+          <div class="empty-state">
+            <svg viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="m8 35 10-23 9 23 12-25" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="35" r="3" fill="#edf2eb" stroke="currentColor" stroke-width="1.5"/><circle cx="39" cy="10" r="3" fill="#edf2eb" stroke="currentColor" stroke-width="1.5"/></svg>
+            <strong>Ready when you are</strong>
+            <span>Your measurements and feature summary will show here.</span>
+          </div>
+        </div>
+      </section>
+    </section>
+    <footer class="footer">A small window into your geospatial API · <a href="/docs" target="_blank" rel="noreferrer">Open API docs</a></footer>
+  </main>
+
+  <script>
+    const $ = (selector) => document.querySelector(selector);
+    const fileInput = $("#file-input");
+    const dropzone = $("#dropzone");
+    const uploadButton = $("#upload-button");
+    const resultBody = $("#result-body");
+    let selectedFile = null;
+    let busy = false;
+
+    const sampleKml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark>
+  <name>Sample field · 100 m square</name><Polygon><outerBoundaryIs><LinearRing><coordinates>
+    0,0 0.001,0 0.001,0.001 0,0.001 0,0
+  </coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></Document></kml>`;
+
+    function humanSize(bytes) {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    }
+
+    function setFile(file) {
+      if (!file) return;
+      const name = file.name || "sample.kml";
+      if (!/\.(kml|zip)$/i.test(name)) {
+        showMessage("Choose a .kml file or a .zip containing a Shapefile.", true);
+        return;
+      }
+      selectedFile = file;
+      $("#file-name").textContent = name;
+      $("#file-size").textContent = humanSize(file.size || 0);
+      $("#file-type").textContent = name.toLowerCase().endsWith(".zip") ? "ZIP" : "KML";
+      $("#file-row").classList.add("visible");
+      uploadButton.disabled = busy;
+      clearResult();
+    }
+
+    function clearResult() {
+      resultBody.innerHTML = `<div class="empty-state"><svg viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="m8 35 10-23 9 23 12-25" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="35" r="3" fill="#edf2eb" stroke="currentColor" stroke-width="1.5"/><circle cx="39" cy="10" r="3" fill="#edf2eb" stroke="currentColor" stroke-width="1.5"/></svg><strong>Ready when you are</strong><span>Your measurements and feature summary will show here.</span></div>`;
+    }
+
+    function showMessage(message, error = false, loading = false) {
+      const className = error ? "error" : "";
+      const icon = loading ? '<span class="spinner"></span>' : error ? "!" : "✓";
+      resultBody.innerHTML = `<div class="state-line ${className}">${icon}<span>${escapeHtml(message)}</span></div>`;
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+    }
+
+    function formatMeasure(measurement) {
+      if (!measurement || typeof measurement.value !== "number") return "No metric result";
+      const value = measurement.value;
+      const formatted = value >= 1000 ? value.toLocaleString(undefined, { maximumFractionDigits: 1 }) : value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+      return `${formatted} <small>${escapeHtml(measurement.unit.replaceAll("_", " "))}</small>`;
+    }
+
+    function renderResult(info, features, cacheHit = false) {
+      const measurements = features.filter((feature) => feature.measurement && Number.isFinite(feature.measurement.value));
+      const measuredCount = measurements.length;
+      const areaCount = measurements.filter((feature) => feature.measurement.type === "area").length;
+      const lengthCount = measurements.filter((feature) => feature.measurement.type === "length").length;
+      const totalArea = measurements.filter((feature) => feature.measurement.type === "area").reduce((sum, feature) => sum + feature.measurement.value, 0);
+      const totalLength = measurements.filter((feature) => feature.measurement.type === "length").reduce((sum, feature) => sum + feature.measurement.value, 0);
+      const summary = areaCount ? `${totalArea.toLocaleString(undefined, { maximumFractionDigits: 1 })} m² total area` : `${totalLength.toLocaleString(undefined, { maximumFractionDigits: 1 })} m total length`;
+      const featureCards = features.map((feature, index) => {
+        const properties = feature.properties || {};
+        const label = properties.Name || properties.name || properties.NAME || `Feature ${index + 1}`;
+        const type = feature.geometry_type || "Unknown geometry";
+        const measure = feature.measurement;
+        const crs = measure?.crs || feature.crs || "CRS unknown";
+        return `<article class="feature">
+          <div class="feature-top"><span class="feature-name">${escapeHtml(label)}</span><span class="feature-type">${escapeHtml(type)}</span></div>
+          <div class="feature-measure">${formatMeasure(measure)}</div>
+          <div class="feature-foot">${escapeHtml(feature.measurement_status || "No measurement")} · ${escapeHtml(crs)}</div>
+        </article>`;
+      }).join("");
+      const payload = { file: info, feature_count: features.length, crs: info.crs ?? null, features };
+      resultBody.innerHTML = `
+        <div class="result-meta"><span>${escapeHtml(info.filename || "Uploaded file")}</span><span class="pill">${cacheHit ? "CACHE HIT" : "COMPLETED"}</span></div>
+        <div class="metrics">
+          <div class="metric"><div class="metric-label">Features</div><div class="metric-value">${features.length}</div></div>
+          <div class="metric"><div class="metric-label">Measured</div><div class="metric-value">${measuredCount}</div></div>
+          <div class="metric"><div class="metric-label">Source CRS</div><div class="metric-value" title="${escapeHtml(info.crs || "Unknown")}">${escapeHtml(info.crs || "Unknown")}</div></div>
+        </div>
+        <div class="result-meta"><span>${escapeHtml(summary)}</span><span>${escapeHtml(info.status || "COMPLETED")}</span></div>
+        <div class="feature-list">${featureCards || '<div class="state-line">No features were found in this result.</div>'}</div>
+        <button class="raw-toggle" id="raw-toggle" type="button">Show raw API response</button>
+        <pre class="raw-json" id="raw-json">${escapeHtml(JSON.stringify(payload, null, 2))}</pre>`;
+      $("#raw-toggle").addEventListener("click", () => {
+        const raw = $("#raw-json");
+        raw.classList.toggle("visible");
+        $("#raw-toggle").textContent = raw.classList.contains("visible") ? "Hide raw API response" : "Show raw API response";
+      });
+    }
+
+    async function readJson(response) {
+      let body;
+      try { body = await response.json(); } catch { throw new Error(`API returned HTTP ${response.status} without JSON.`); }
+      if (!response.ok) throw new Error(body.detail || body.error || `Request failed with HTTP ${response.status}.`);
+      return body;
+    }
+
+    async function pollJob(jobId) {
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 1400));
+        const response = await fetch(`/api/v1/measure/${encodeURIComponent(jobId)}`);
+        const job = await readJson(response);
+        if (job.status === "FAILED") throw new Error(job.error || "Background measurement failed.");
+        if (job.status === "COMPLETED") {
+          const result = job.result;
+          if (!result) throw new Error("The job completed but returned no result.");
+          renderResult(result.file, result.features || []);
+          return;
+        }
+        showMessage(`Large file is ${String(job.status || "processing").toLowerCase()}…`, false, true);
+      }
+    }
+
+    async function uploadSelected() {
+      if (!selectedFile || busy) return;
+      busy = true;
+      uploadButton.disabled = true;
+      $("#browse-button").disabled = true;
+      $("#sample-button").disabled = true;
+      showMessage("Uploading and measuring your file…", false, true);
+      try {
+        const form = new FormData();
+        form.append("file", selectedFile, selectedFile.name || "sample.kml");
+        const response = await fetch("/api/v1/measure", { method: "POST", body: form });
+        const body = await readJson(response);
+        if (response.status === 202 || body.status === "QUEUED") {
+          showMessage("Upload accepted. Waiting for a background worker…", false, true);
+          await pollJob(body.job_id);
+        } else {
+          const measurements = await readJson(await fetch(`/api/files/${encodeURIComponent(body.id)}/measurements/`));
+          renderResult(body, measurements.features || [], Boolean(body.cache_hit));
+        }
+      } catch (error) {
+        showMessage(error.message || "Something went wrong while contacting the API.", true);
+      } finally {
+        busy = false;
+        uploadButton.disabled = !selectedFile;
+        $("#browse-button").disabled = false;
+        $("#sample-button").disabled = false;
+      }
+    }
+
+    async function checkHealth() {
+      try {
+        const response = await fetch("/health", { cache: "no-store" });
+        if (!response.ok) throw new Error("API unavailable");
+        $("#health-dot").className = "dot online";
+        $("#health-label").textContent = "API connected";
+      } catch {
+        $("#health-dot").className = "dot offline";
+        $("#health-label").textContent = "API unavailable";
+      }
+    }
+
+    $("#browse-button").addEventListener("click", () => fileInput.click());
+    dropzone.addEventListener("click", (event) => {
+      if (!event.target.closest("button")) fileInput.click();
+    });
+    dropzone.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); fileInput.click(); }
+    });
+    fileInput.addEventListener("change", () => setFile(fileInput.files[0]));
+    $("#remove-button").addEventListener("click", () => {
+      selectedFile = null;
+      fileInput.value = "";
+      $("#file-row").classList.remove("visible");
+      uploadButton.disabled = true;
+      clearResult();
+    });
+    $("#sample-button").addEventListener("click", () => setFile(new File([sampleKml], "sample-field.kml", { type: "application/vnd.google-earth.kml+xml" })));
+    uploadButton.addEventListener("click", uploadSelected);
+    ["dragenter", "dragover"].forEach((eventName) => dropzone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      dropzone.classList.add("drag");
+    }));
+    ["dragleave", "drop"].forEach((eventName) => dropzone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      dropzone.classList.remove("drag");
+    }));
+    dropzone.addEventListener("drop", (event) => setFile(event.dataTransfer.files[0]));
+    checkHealth();
+    setInterval(checkHealth, 15000);
+  </script>
+</body>
+</html>

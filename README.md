@@ -8,6 +8,7 @@ A FastAPI service that accepts KML and zipped Shapefile uploads, extracts their 
 - Measure Polygon and MultiPolygon area in square metres and LineString and MultiLineString length in metres.
 - Retain parsed feature geometry, attributes, CRS labels, measurements, and file summaries in SQLite.
 - Cache results in Redis for 24 hours by default, and queue uploads larger than 5 MiB through RQ.
+- Serve a browser dashboard at `/` for uploads, job polling, measurement summaries, and raw API responses.
 - Provide JSON logs, a health endpoint, an OpenAPI page, automated tests, a Locust load profile, and a Docker Compose deployment.
 
 Supported uploads are `.kml` and `.zip` archives containing matching `.shp`, `.shx`, and `.dbf` Shapefile components. Point features are returned with `UNSUPPORTED_GEOMETRY`; point-to-point distance is not implemented yet.
@@ -44,7 +45,7 @@ Docker Compose starts the API, Redis, and one worker. The API and worker share a
 docker compose up --build
 ```
 
-Visit `http://127.0.0.1:8000/health` or `http://127.0.0.1:8000/docs`. Set `API_PORT`, `CACHE_TTL_SECONDS`, or `ASYNC_THRESHOLD_BYTES` before starting Compose to change the host port, cache lifetime, or async threshold. Stop the stack with `Ctrl+C`, then run `docker compose down`; named volumes are retained.
+Open `http://127.0.0.1:8000/` for the browser dashboard, `/health` for the health check, or `/docs` for the interactive API docs. Set `API_PORT`, `CACHE_TTL_SECONDS`, or `ASYNC_THRESHOLD_BYTES` before starting Compose to change the host port, cache lifetime, or async threshold. Stop the stack with `Ctrl+C`, then run `docker compose down`; named volumes are retained.
 
 ### Configuration
 
@@ -171,6 +172,7 @@ Unknown file IDs return `404`. Point and other unsupported feature types are sti
 - `app/jobs.py` — RQ publishing and background job execution.
 - `app/repository.py` — SQLite persistence for file summaries, features, and job state.
 - `app/logging_config.py` — structured JSON logs.
+- `frontend/index.html` — lightweight upload and results dashboard served at `/`.
 - `tests/` — geometry unit and API integration tests.
 - `locustfile.py` — concurrent KML upload benchmark profile.
 - `Dockerfile`, `docker-compose.yml` — container build and API/Redis/worker services.
