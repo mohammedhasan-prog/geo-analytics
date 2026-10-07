@@ -1,0 +1,57 @@
+System Requirements Specification (SRS): Geospatial File Measurement API
+System Goals:
+Process geospatial files to extract measurements (e.g., area, distance, perimeter) with ultra-low response times (latency) and the ability to handle concurrent requests at scale (throughput).
+
+Recommended Tech Stack:
+
+Backend: Go (fiber/gin) or Rust (Actix-web) for maximum throughput, OR Python (FastAPI) with C-optimized geospatial libraries.
+
+Geospatial Engine: GDAL bindings, GEOS, or PostGIS.
+
+Concurrency: Asynchronous I/O and message queues (Redis/RabbitMQ) for large files.
+
+Here is the step-by-step build guide to feed your AI agent:
+
+Phase 1: Project Initialization & API Foundation
+Agent Prompt Step 1:
+"Set up a new backend project optimized for high concurrency. Initialize the project structure, install necessary routing dependencies, and create a basic health-check endpoint (GET /health). Implement structured JSON logging and basic global error handling. Keep the footprint minimal for fast cold starts."
+
+Phase 2: High-Throughput Ingestion & Validation Layer
+Agent Prompt Step 2:
+"Implement a file upload endpoint (POST /api/v1/measure). The endpoint must support streaming file uploads to minimize memory consumption. Add validation to strictly accept only designated geospatial formats (e.g., GeoJSON, KML, Shapefile zip). Reject oversized or malformed payloads immediately with a 400 Bad Request to save compute resources."
+
+Phase 3: Core Geospatial Measurement Engine
+Agent Prompt Step 3:
+"Create a geospatial processing service module. Integrate a high-performance geospatial library (like GDAL or GEOS). Write functions to parse the ingested files and calculate core measurements:
+
+Total perimeter/length of LineStrings.
+
+Total area of Polygons.
+
+Distance between Point geometries.
+Ensure these calculations handle Coordinate Reference System (CRS) transformations correctly (e.g., converting WGS84 to a projected coordinate system for accurate meter/kilometer measurements)."
+
+Phase 4: Asynchronous Processing (For Large Files)
+Agent Prompt Step 4:
+"To maintain low latency on the main thread, implement an asynchronous processing model. If an uploaded file exceeds a certain size threshold (e.g., 5MB):
+
+Immediately return a 202 Accepted with a job_id.
+
+Offload the measurement calculation to a background worker pool using a lightweight message broker (like Redis).
+
+Create a polling endpoint (GET /api/v1/measure/{job_id}) to retrieve the status and final results of the calculation."
+
+Phase 5: Caching & Performance Optimization
+Agent Prompt Step 5:
+"Implement an in-memory caching layer (e.g., Redis). Before processing a file, generate a cryptographic hash (SHA-256) of the file content. Check if the hash exists in the cache. If it does, immediately return the cached measurement result to achieve near-zero latency. Set an appropriate TTL (Time to Live) for the cached results."
+
+Phase 6: Load Testing & Benchmarking Setup
+Agent Prompt Step 6:
+"Write unit tests for the geometry calculations and integration tests for the API endpoints. Additionally, create a load-testing script (using tools like k6, Locust, or wrk) simulating hundreds of concurrent users uploading various geospatial files to verify the system meets the high-throughput and low-latency requirements."
+
+Phase 7: Containerization & Deployment
+Agent Prompt Step 7:
+"Write a multi-stage Dockerfile to containerize the application. Ensure the final image is minimal (using distroless or Alpine bases if compatible with the geospatial C-libraries). Include a docker-compose.yml file that spins up the API, the Redis cache, and any necessary background workers."
+
+Next Steps:
+Copy Phase 1 and paste it into your AI coding agent to start the build. If there are specific rules from your DOCX file (like specific file types you are targeting), just let me know and I will adjust the steps!
