@@ -1,0 +1,84 @@
+[33mcommit 97cc0022e227475ca579ef3ec6348472820d76ae[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: Mohammed Hasan <mohammed.hasan22b@iiitg.ac.in>
+Date:   Wed Oct 7 14:32:46 2026 +0530
+
+    feat: add geospatial upload dashboard
+
+[33mcommit d5b4483868fdb5489e2bd34aeb2970958a4f88fc[m
+Author: Mohammed Hasan <mohammed.hasan22b@iiitg.ac.in>
+Date:   Wed Oct 7 14:26:53 2026 +0530
+
+    chore: ignore SRS specification file
+
+[33mcommit 5af25c7bbfa5d7ab9e7c8a53596dd4ee706d459e[m
+Author: Mohammed Hasan <mohammed.hasan22b@iiitg.ac.in>
+Date:   Wed Oct 7 14:25:55 2026 +0530
+
+    final commit
+
+[33mcommit 1fe3a068d361201a2ca84d53f14232474a6b3097[m
+Author: Mohammed Hasan <mohammed.hasan22b@iiitg.ac.in>
+Date:   Wed Oct 7 14:24:09 2026 +0530
+
+    chore: Remove compiled Python cache files from __pycache__ directory
+
+[33mcommit 4b29322cae4f4051b73e217d79704a05303e7909[m
+Author: Mohammed Hasan <mohammed.hasan22b@iiitg.ac.in>
+Date:   Wed Oct 7 13:30:50 2026 +0530
+
+    feat: Add Docker support with Dockerfile and docker-compose, and implement Locust load testing for KML uploads
+
+[33mcommit bf332ea2668a2dc8e01fba97a1019849103c1c60[m
+Author: Mohammed Hasan <mohammed.hasan22b@iiitg.ac.in>
+Date:   Wed Oct 7 13:30:33 2026 +0530
+
+    feat: Add unit tests for CRS-aware geometry measurements
+
+[33mcommit f499eb7f9082d65568875aee4e183396ba4bad7a[m
+Author: Mohammed Hasan <mohammed.hasan22b@iiitg.ac.in>
+Date:   Wed Oct 7 13:19:03 2026 +0530
+
+    Add Phase 3 API smoke tests and KML handling
+    
+    - Introduced comprehensive smoke tests for the Phase 3 API using temporary geospatial inputs.
+    - Implemented tests for KML polygon and point measurements, ensuring correct handling and persistence.
+    - Added functionality to handle cached measurements and validate responses for various geometries.
+    - Enhanced error handling for malformed KML uploads and ensured proper status reporting for queued measurements.
+
+[33mcommit 9951c50102fc3e66c05063f283270591dd68d6f1[m
+Author: Mohammed Hasan <mohammed.hasan22b@iiitg.ac.in>
+Date:   Wed Oct 7 13:12:50 2026 +0530
+
+    feat: Add Redis-backed caching for measurement results and enhance upload processing with SHA-256 hashing
+
+[33mcommit 499936109a8e340b4e8e1a49ccbe403cff19cbc3[m
+Author: Mohammed Hasan <mohammed.hasan22b@iiitg.ac.in>
+Date:   Wed Oct 7 13:07:00 2026 +0530
+
+    feat: Implement Redis-backed asynchronous processing for large geospatial file uploads and add job status API
+
+[33mcommit 74ea612796efef60b0da1ba756b3ccb9e7fd8e15[m
+Author: Mohammed Hasan <mohammed.hasan22b@iiitg.ac.in>
+Date:   Wed Oct 7 12:58:33 2026 +0530
+
+    feat: Enhance geospatial processing with pyogrio integration and add API endpoints for file information and measurements
+
+[33mcommit 833f727add92a45d35f71613417924251d93d53a[m
+Author: Mohammed Hasan <mohammed.hasan22b@iiitg.ac.in>
+Date:   Wed Oct 7 12:31:21 2026 +0530
+
+    feat: Implement geospatial file processing API with KML and Shapefile support
+    
+    - Add geoprocessing module for feature extraction and metric calculations.
+    - Introduce structured JSON logging configuration.
+    - Create main FastAPI application with health check and file upload endpoints.
+    - Implement SQLite repository for storing processed file summaries and measurements.
+    - Develop upload handling with validation for KML and zipped Shapefiles.
+    - Define custom exceptions for upload rejection and processing errors.
+    - Update requirements.txt with necessary dependencies for geospatial processing.
+
+[33mcommit 2fc4b6a679a7c39556a3a1d2167616c68895b562[m
+Author: Mohammed Hasan <mohammed.hasan22b@iiitg.ac.in>
+Date:   Wed Oct 7 12:31:02 2026 +0530
+
+    first commit
